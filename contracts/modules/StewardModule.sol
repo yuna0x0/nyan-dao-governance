@@ -6,43 +6,46 @@ import "@openzeppelin/contracts/utils/structs/EnumerableMap.sol";
 
 import {SafeModule} from "../base/SafeModule.sol";
 import {ISafeGovernance} from "../interfaces/ISafeGovernance.sol";
+import {Voting} from "../common/Voting.sol";
 import "../utils/MathUtils.sol";
 
-contract StewardModule is SafeModule {
-    enum StewardAction {
-        Add,
-        Remove,
-        Modify
-    }
-
-    struct StewardActionProposal {
-        StewardAction action;
-        address stewardAddress;
-        uint256 newExpireTimestamp;
+abstract contract StewardManager {
+    enum StewardStatus {
+        NotExist,
+        Valid,
+        Expired
     }
 
     using EnumerableMap for EnumerableMap.AddressToUintMap;
 
-    // Steward address => Steward expire timestamp (After this timestamp, this steward no longer has access and waiting to be removed.)
+    // Steward address => Steward expire block timestamp (After this block timestamp, the steward is no longer valid)
     EnumerableMap.AddressToUintMap private _stewards;
 
-    StewardActionProposal[] private _stewardActionProposals;
-
     modifier onlySteward() {
-        require(isStewardAddress(msg.sender), "Not a steward");
+        require(
+            getStewardStatus(msg.sender) == StewardStatus.Valid,
+            "Not a valid steward"
+        );
         _;
     }
 
-    modifier onlySelf() {
-        require(msg.sender == address(this), "Not self");
+    modifier checkStewardIndex(uint256 index, bool onlyValid) {
+        if (onlyValid) {
+            require(index < getValidStewardsLength(), "Index out of bounds");
+        } else {
+            require(index < getStewardsLength(), "Index out of bounds");
+        }
         _;
     }
 
     constructor(
-        address safeAccount_,
         address[] memory stewardAddresses,
         uint256[] memory stewardExpireTimestamps
-    ) SafeModule(safeAccount_) {
+    ) {
+        require(
+            stewardAddresses.length == stewardExpireTimestamps.length,
+            "Length mismatch"
+        );
         for (uint256 i = 0; i < stewardAddresses.length; i++) {
             require(
                 _stewards.set(stewardAddresses[i], stewardExpireTimestamps[i]),
@@ -51,26 +54,214 @@ contract StewardModule is SafeModule {
         }
     }
 
-    /**
-     * @dev Check if the address is a steward and the stewardship has not expired.
-     * @param address_ Address to check.
-     * @return isSteward Boolean flag indicating if the address is a steward and the stewardship has not expired.
-     */
-    function isStewardAddress(
+    function getStewardStatus(
         address address_
-    ) public view returns (bool isSteward) {
-        return
-            _stewards.contains(address_) &&
-            _stewards.get(address_) > block.timestamp;
+    ) public view returns (StewardStatus status) {
+        if (!_stewards.contains(address_)) {
+            return StewardStatus.NotExist;
+        } else if (_stewards.get(address_) <= block.timestamp) {
+            return StewardStatus.Expired;
+        } else {
+            return StewardStatus.Valid;
+        }
+    }
+
+    function getValidStewards()
+        public
+        view
+        returns (address[] memory addresses)
+    {
+        address[] memory _addresses = _stewards.keys();
+        for (uint256 i = 0; i < _addresses.length; i++) {
+            if (_stewards.get(_addresses[i]) <= block.timestamp) {
+                delete _addresses[i];
+            }
+        }
+        return _addresses;
+    }
+
+    function getValidStewardsLength() public view returns (uint256 length) {
+        address[] memory _addresses = getValidStewards();
+        return _addresses.length;
+    }
+
+    function getValidStewardAtIndex(
+        uint256 index
+    )
+        public
+        view
+        checkStewardIndex(index, true)
+        returns (address address_, uint256 expireTimestamp)
+    {
+        address[] memory _addresses = getValidStewards();
+        return (_addresses[index], _stewards.get(_addresses[index]));
+    }
+
+    function getStewards() public view returns (address[] memory addresses) {
+        return _stewards.keys();
     }
 
     function getStewardsLength() public view returns (uint256 length) {
         return _stewards.length();
     }
 
-    function getStewards() public view returns (address[] memory addresses) {
-        return _stewards.keys();
+    function getStewardAtIndex(
+        uint256 index
+    )
+        public
+        view
+        checkStewardIndex(index, false)
+        returns (address address_, uint256 expireTimestamp)
+    {
+        return _stewards.at(index);
     }
+
+    function _setSteward(
+        address address_,
+        uint256 expireTimestamp
+    ) internal returns (bool isNewEntry) {
+        return _stewards.set(address_, expireTimestamp);
+    }
+
+    function _removeSteward(address address_) internal returns (bool success) {
+        return _stewards.remove(address_);
+    }
+}
+
+abstract contract StewardProposalVoting is StewardManager, Voting {
+    enum StewardAction {
+        Set,
+        Remove
+    }
+
+    struct StewardProposal {
+        StewardAction action;
+        address targetAddress;
+        uint256 newExpireTimestamp;
+        ProposalVote[] votes;
+        uint256 votingEndTimestamp;
+    }
+
+    StewardProposal[] private _stewardProposals;
+    uint256 public proposalVoteDuration;
+
+    modifier checkStewardPropose(
+        StewardAction action,
+        address targetAddress,
+        uint256 newExpireTimestamp
+    ) {
+        require(
+            action == StewardAction.Set || action == StewardAction.Remove,
+            "Invalid action"
+        );
+        if (action == StewardAction.Set) {
+            require(
+                newExpireTimestamp > block.timestamp,
+                "New expire timestamp must be in the future"
+            );
+        } else if (action == StewardAction.Remove) {
+            require(
+                getStewardStatus(targetAddress) != StewardStatus.NotExist,
+                "Steward does not exist"
+            );
+            require(
+                newExpireTimestamp == 0,
+                "New expire timestamp must be zero"
+            );
+        }
+        _;
+    }
+
+    modifier checkStewardProposeIndex(uint256 index) {
+        require(index < getStewardProposalsLength(), "Index out of bounds");
+        _;
+    }
+
+    constructor(
+        address[] memory stewardAddresses,
+        uint256[] memory stewardExpireTimestamps,
+        uint256 proposalVoteDuration_
+    ) StewardManager(stewardAddresses, stewardExpireTimestamps) {
+        proposalVoteDuration = proposalVoteDuration_;
+    }
+
+    function getStewardProposals()
+        public
+        view
+        returns (StewardProposal[] memory proposals)
+    {
+        return _stewardProposals;
+    }
+
+    function getStewardProposalsLength() public view returns (uint256 length) {
+        return _stewardProposals.length;
+    }
+
+    function getStewardProposalAtIndex(
+        uint256 index
+    )
+        public
+        view
+        checkStewardProposeIndex(index)
+        returns (
+            StewardAction action,
+            address targetAddress,
+            uint256 newExpireTimestamp,
+            ProposalVote[] memory votes,
+            uint256 votingEndTimestamp
+        )
+    {
+        StewardProposal memory proposal = _stewardProposals[index];
+        return (
+            proposal.action,
+            proposal.targetAddress,
+            proposal.newExpireTimestamp,
+            proposal.votes,
+            proposal.votingEndTimestamp
+        );
+    }
+
+    // TODO
+    // function proposeSteward(
+    //     StewardAction action,
+    //     address targetAddress,
+    //     uint256 newExpireTimestamp
+    // )
+    //     external
+    //     onlySteward
+    //     checkStewardPropose(action, targetAddress, newExpireTimestamp)
+    //     returns (uint256 proposalId)
+    // {
+    //     StewardProposal memory proposal = StewardProposal({
+    //         action: action,
+    //         targetAddress: targetAddress,
+    //         newExpireTimestamp: newExpireTimestamp,
+    //         votes: new ProposalVote[](0), // TODO
+    //         votingEndTimestamp: block.timestamp + proposalVoteDuration
+    //     });
+    //     _stewardProposals.push(proposal);
+    //     return _stewardProposals.length - 1;
+    // }
+
+    function _setStewardVoteDuration(uint256 duration) internal {
+        proposalVoteDuration = duration;
+    }
+}
+
+contract StewardModule is SafeModule, StewardProposalVoting {
+    constructor(
+        address safeAccount_,
+        address[] memory stewardAddresses,
+        uint256[] memory stewardExpireTimestamps,
+        uint256 initProposalVoteDuration
+    )
+        SafeModule(safeAccount_)
+        StewardProposalVoting(
+            stewardAddresses,
+            stewardExpireTimestamps,
+            initProposalVoteDuration
+        )
+    {}
 
     // TODO
     // function execute(
