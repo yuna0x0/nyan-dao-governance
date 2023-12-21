@@ -3,8 +3,8 @@ pragma solidity ^0.8.22;
 
 import {Enum} from "@safe-global/safe-contracts/contracts/common/Enum.sol";
 
-import {SafeModule} from "./base/SafeModule.sol";
-import {ISafeGovernance} from "./interfaces/ISafeGovernance.sol";
+import {SafeModule} from "../base/SafeModule.sol";
+import {ISafeGovernance} from "../interfaces/ISafeGovernance.sol";
 
 interface IFeeToSetter {
     function setOwner(address owner_) external;

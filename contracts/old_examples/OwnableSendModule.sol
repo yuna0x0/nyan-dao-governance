@@ -4,7 +4,7 @@ pragma solidity ^0.8.22;
 import {Enum} from "@safe-global/safe-contracts/contracts/common/Enum.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
-import {SafeModule} from "./base/SafeModule.sol";
+import {SafeModule} from "../base/SafeModule.sol";
 
 contract OwnableSendModule is SafeModule, Ownable {
     constructor(
