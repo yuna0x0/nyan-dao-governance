@@ -73,7 +73,7 @@ abstract contract StewardManager {
     {
         address[] memory _addresses = _stewards.keys();
         for (uint256 i = 0; i < _addresses.length; i++) {
-            if (_stewards.get(_addresses[i]) <= block.timestamp) {
+            if (getStewardStatus(_addresses[i]) != StewardStatus.Valid) {
                 delete _addresses[i];
             }
         }
@@ -114,6 +114,15 @@ abstract contract StewardManager {
         returns (address address_, uint256 expireTimestamp)
     {
         return _stewards.at(index);
+    }
+
+    function removeExpiredStewards() public onlySteward {
+        address[] memory _addresses = _stewards.keys();
+        for (uint256 i = 0; i < _addresses.length; i++) {
+            if (getStewardStatus(_addresses[i]) == StewardStatus.Expired) {
+                assert(_stewards.remove(_addresses[i]));
+            }
+        }
     }
 
     function _setSteward(
