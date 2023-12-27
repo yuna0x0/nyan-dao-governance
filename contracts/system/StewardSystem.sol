@@ -2,6 +2,7 @@
 pragma solidity ^0.8.22;
 
 import {Enum} from "@safe-global/safe-contracts/contracts/common/Enum.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/structs/EnumerableMap.sol";
 
 import {SafeModule} from "../base/SafeModule.sol";
@@ -116,7 +117,7 @@ abstract contract StewardManager {
         return _stewards.at(index);
     }
 
-    function removeExpiredStewards() public onlySteward {
+    function _removeExpiredStewards() internal {
         address[] memory _addresses = _stewards.keys();
         for (uint256 i = 0; i < _addresses.length; i++) {
             if (getStewardStatus(_addresses[i]) == StewardStatus.Expired) {
@@ -138,6 +139,8 @@ abstract contract StewardManager {
 }
 
 abstract contract StewardProposalVoting is StewardManager, Voting {
+    using EnumerableMap for EnumerableMap.UintToAddressMap;
+
     enum StewardAction {
         Set,
         Remove
@@ -147,8 +150,10 @@ abstract contract StewardProposalVoting is StewardManager, Voting {
         StewardAction action;
         address targetAddress;
         uint256 newExpireTimestamp;
-        ProposalVote[] votes;
+        EnumerableMap.AddressToUintMap voters;
+        //address[] voters;
         uint256 votingEndTimestamp;
+        bool executed;
     }
 
     StewardProposal[] private _stewardProposals;
@@ -194,82 +199,145 @@ abstract contract StewardProposalVoting is StewardManager, Voting {
         proposalVoteDuration = proposalVoteDuration_;
     }
 
-    function getStewardProposals()
-        public
-        view
-        returns (StewardProposal[] memory proposals)
-    {
-        return _stewardProposals;
-    }
-
     function getStewardProposalsLength() public view returns (uint256 length) {
         return _stewardProposals.length;
     }
 
-    function getStewardProposalAtIndex(
-        uint256 index
+    function getStewardProposalById(
+        uint256 proposalId
     )
         public
         view
-        checkStewardProposeIndex(index)
+        checkStewardProposeIndex(proposalId)
         returns (
             StewardAction action,
             address targetAddress,
             uint256 newExpireTimestamp,
-            ProposalVote[] memory votes,
-            uint256 votingEndTimestamp
+            address[] memory voters,
+            uint256 votingEndTimestamp,
+            bool executed
         )
     {
-        StewardProposal memory proposal = _stewardProposals[index];
         return (
-            proposal.action,
-            proposal.targetAddress,
-            proposal.newExpireTimestamp,
-            proposal.votes,
-            proposal.votingEndTimestamp
+            _stewardProposals[proposalId].action,
+            _stewardProposals[proposalId].targetAddress,
+            _stewardProposals[proposalId].newExpireTimestamp,
+            _getStewardVoters(proposalId),
+            _stewardProposals[proposalId].votingEndTimestamp,
+            _stewardProposals[proposalId].executed
         );
     }
 
-    // TODO
-    // function proposeSteward(
-    //     StewardAction action,
-    //     address targetAddress,
-    //     uint256 newExpireTimestamp
-    // )
-    //     external
-    //     onlySteward
-    //     checkStewardPropose(action, targetAddress, newExpireTimestamp)
-    //     returns (uint256 proposalId)
-    // {
-    //     StewardProposal memory proposal = StewardProposal({
-    //         action: action,
-    //         targetAddress: targetAddress,
-    //         newExpireTimestamp: newExpireTimestamp,
-    //         votes: new ProposalVote[](0), // TODO
-    //         votingEndTimestamp: block.timestamp + proposalVoteDuration
-    //     });
-    //     _stewardProposals.push(proposal);
-    //     return _stewardProposals.length - 1;
-    // }
+    function proposeSteward(
+        StewardAction action,
+        address targetAddress,
+        uint256 newExpireTimestamp
+    )
+        external
+        onlySteward
+        checkStewardPropose(action, targetAddress, newExpireTimestamp)
+        returns (uint256 proposalId)
+    {
+        StewardProposal storage proposal;
+        proposal.action = action;
+        proposal.targetAddress = targetAddress;
+        proposal.newExpireTimestamp = newExpireTimestamp;
+        proposal.votingEndTimestamp = block.timestamp + proposalVoteDuration;
+        proposal.executed = false;
+        _stewardProposals.push(proposal);
+
+        // DEBUG
+        _stewardProposals[_stewardProposals.length - 1].votes.push(
+            ProposalVote({voterAddress: msg.sender, vote: Vote.Approve})
+        );
+
+        return _stewardProposals.length - 1;
+    }
+
+    function voteOnProposal(
+        uint256 proposalId,
+        Vote vote
+    ) external checkStewardProposeIndex(proposalId) {
+        StewardProposal storage proposal = _stewardProposals[proposalId];
+        require(
+            proposal.votingEndTimestamp > block.timestamp,
+            "Voting has ended"
+        );
+        for (uint256 i = 0; i < proposal.voters.length; i++) {
+            require(proposal.voters[i] == msg.sender, "Not a valid voter");
+        }
+        for (uint256 i = 0; i < proposal.votes.length; i++) {
+            require(
+                proposal.votes[i].voterAddress != msg.sender,
+                "Already voted"
+            );
+        }
+        proposal.votes.push(
+            ProposalVote({voterAddress: msg.sender, vote: vote})
+        );
+    }
+
+    function executeProposal(
+        uint256 proposalId
+    ) external checkStewardProposeIndex(proposalId) {
+        StewardProposal storage proposal = _stewardProposals[proposalId];
+
+        require(
+            proposal.votingEndTimestamp <= block.timestamp,
+            "Voting has not ended"
+        );
+        require(!proposal.executed, "Already executed");
+
+        uint256 approveVotes = 0;
+        for (uint256 i = 0; i < proposal.votes.length; i++) {
+            if (proposal.votes[i].vote == Vote.Approve) {
+                approveVotes++;
+            }
+        }
+
+        require(
+            MathUtils.isWithinPercentage(
+                approveVotes,
+                proposal.voters.length,
+                66
+            ),
+            "Not enough votes"
+        );
+
+        // mark as executed before calls to avoid reentrancy
+        proposal.executed = true;
+
+        if (proposal.action == StewardAction.Set) {
+            _setSteward(proposal.targetAddress, proposal.newExpireTimestamp);
+        } else if (proposal.action == StewardAction.Remove) {
+            _removeSteward(proposal.targetAddress);
+        }
+    }
+
+    function _getStewardVoters(
+        uint256 proposalId
+    ) internal view returns (address[] memory voters) {
+        return _stewardProposals[proposalId].voters.keys();
+    }
 
     function _setStewardVoteDuration(uint256 duration) internal {
         proposalVoteDuration = duration;
     }
 }
 
-contract StewardModule is SafeModule, StewardProposalVoting {
+contract StewardSystem is StewardProposalVoting, Ownable {
     constructor(
-        address safeAccount_,
         address[] memory stewardAddresses,
         uint256[] memory stewardExpireTimestamps,
-        uint256 initProposalVoteDuration
+        uint256 proposalVoteDuration_,
+        address owner
     )
-        SafeModule(safeAccount_)
         StewardProposalVoting(
             stewardAddresses,
             stewardExpireTimestamps,
-            initProposalVoteDuration
+            proposalVoteDuration_
         )
+        Ownable(owner)
     {}
 
     // TODO
@@ -279,11 +347,4 @@ contract StewardModule is SafeModule, StewardProposalVoting {
     // ) external onlySteward returns (bool success) {
     //     return true;
     // }
-
-    function send(
-        address to,
-        uint256 value
-    ) external onlySteward returns (bool success) {
-        return execTransactionFromModule(to, value, "0x", Enum.Operation.Call);
-    }
 }
