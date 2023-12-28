@@ -7,9 +7,4 @@ abstract contract Voting {
         Approve,
         Reject
     }
-
-    struct ProposalVote {
-        address voterAddress;
-        Vote vote;
-    }
 }
