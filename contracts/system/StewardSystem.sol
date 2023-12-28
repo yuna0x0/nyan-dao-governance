@@ -68,6 +68,12 @@ abstract contract StewardManager {
         }
     }
 
+    function getStewardExpireTimestamp(
+        address address_
+    ) public view returns (uint256 stewardExpireTimestamp) {
+        return _stewards.get(address_);
+    }
+
     function getValidStewards()
         public
         view
@@ -146,6 +152,15 @@ abstract contract StewardProposalVoting is StewardManager, Voting {
         Set,
         Remove
     }
+
+    event StewardProposalCreated(
+        uint256 proposalId,
+        StewardAction action,
+        address targetAddress,
+        uint256 newExpireTimestamp,
+        uint256 votingEndTimestamp,
+        address[] voters
+    );
 
     struct StewardProposal {
         StewardAction action;
@@ -277,6 +292,15 @@ abstract contract StewardProposalVoting is StewardManager, Voting {
                     .Approve;
         }
 
+        emit StewardProposalCreated(
+            _stewardProposals.length - 1,
+            action,
+            targetAddress,
+            newExpireTimestamp,
+            votingEndTimestamp_,
+            voters_
+        );
+
         return _stewardProposals.length - 1;
     }
 
@@ -381,7 +405,7 @@ contract StewardSystem is StewardProposalVoting, Ownable {
         )
         Ownable(owner)
     {}
-    
+
     // function setStewardVoteDuration(uint256 duration) external onlyOwner {
     //     _setStewardVoteDuration(duration);
     // }
