@@ -31,12 +31,8 @@ abstract contract StewardManager {
         _;
     }
 
-    modifier checkStewardIndex(uint256 index, bool onlyValid) {
-        if (onlyValid) {
-            require(index < getValidStewardsLength(), "Index out of bounds");
-        } else {
-            require(index < getStewardsLength(), "Index out of bounds");
-        }
+    modifier checkStewardIndex(uint256 index) {
+        require(index < getStewardsLength(), "Index out of bounds");
         _;
     }
 
@@ -68,41 +64,18 @@ abstract contract StewardManager {
         }
     }
 
-    function getStewardExpireTimestamp(
+    function getSteward(
         address address_
-    ) public view returns (uint256 stewardExpireTimestamp) {
-        return _stewards.get(address_);
-    }
-
-    function getValidStewards()
-        public
-        view
-        returns (address[] memory addresses)
-    {
-        address[] memory _addresses = _stewards.keys();
-        for (uint256 i = 0; i < _addresses.length; i++) {
-            if (getStewardStatus(_addresses[i]) != StewardStatus.Valid) {
-                delete _addresses[i];
-            }
-        }
-        return _addresses;
-    }
-
-    function getValidStewardsLength() public view returns (uint256 length) {
-        address[] memory _addresses = getValidStewards();
-        return _addresses.length;
-    }
-
-    function getValidStewardAtIndex(
-        uint256 index
     )
         public
         view
-        checkStewardIndex(index, true)
-        returns (address address_, uint256 expireTimestamp)
+        returns (StewardStatus status, uint256 stewardExpireTimestamp)
     {
-        address[] memory _addresses = getValidStewards();
-        return (_addresses[index], _stewards.get(_addresses[index]));
+        status = getStewardStatus(address_);
+        if (status == StewardStatus.NotExist) {
+            return (status, 0);
+        }
+        return (status, _stewards.get(address_));
     }
 
     function getStewards() public view returns (address[] memory addresses) {
@@ -118,12 +91,18 @@ abstract contract StewardManager {
     )
         public
         view
-        checkStewardIndex(index, false)
+        checkStewardIndex(index)
         returns (address address_, uint256 expireTimestamp)
     {
         return _stewards.at(index);
     }
 
+    // function _checkAddress(address address_) internal view {
+    //     require(address_ != address(0), "Cannot target zero address");
+    //     require(address_ != address(this), "Cannot target self");
+    // }
+
+    // TODO: To be used by StewardSystem
     function _removeExpiredStewards() internal {
         address[] memory _addresses = _stewards.keys();
         for (uint256 i = 0; i < _addresses.length; i++) {
@@ -257,9 +236,6 @@ abstract contract StewardProposalVoting is StewardManager, Voting {
         checkStewardPropose(action, targetAddress, newExpireTimestamp)
         returns (uint256 proposalId)
     {
-        address[] memory voters_ = getValidStewards();
-        require(voters_.length > 0, "No valid stewards");
-
         (bool voteDurationNotOverflow, uint256 votingEndTimestamp_) = Math
             .tryAdd(block.timestamp, proposalVoteDuration);
         require(voteDurationNotOverflow, "Vote duration overflow");
@@ -269,42 +245,50 @@ abstract contract StewardProposalVoting is StewardManager, Voting {
             targetAddress: targetAddress,
             newExpireTimestamp: newExpireTimestamp,
             votingEndTimestamp: votingEndTimestamp_,
-            voters: voters_,
-            votes: new Vote[](voters_.length),
+            voters: new address[](0),
+            votes: new Vote[](0),
             executed: false
         });
+
         _stewardProposals.push(proposal);
+        proposalId = _stewardProposals.length - 1;
+        _checkStewardProposeIndex(proposalId);
 
-        _checkStewardProposeIndex(_stewardProposals.length - 1);
-        _checkStewardProposalVotersAndVotesLength(_stewardProposals.length - 1);
-
-        // DEBUG
-        for (
-            uint256 i = 0;
-            i < _stewardProposals[_stewardProposals.length - 1].voters.length;
-            i++
-        ) {
-            if (
-                _stewardProposals[_stewardProposals.length - 1].voters[i] ==
-                msg.sender
-            )
-                _stewardProposals[_stewardProposals.length - 1].votes[i] = Vote
-                    .Approve;
+        address[] memory unscreenedVoters = getStewards();
+        for (uint256 i = 0; i < unscreenedVoters.length; i++) {
+            if (getStewardStatus(unscreenedVoters[i]) == StewardStatus.Valid) {
+                _stewardProposals[proposalId].voters.push(unscreenedVoters[i]);
+                _stewardProposals[proposalId].votes.push(Vote.Abstain);
+            }
         }
-
-        emit StewardProposalCreated(
-            _stewardProposals.length - 1,
-            action,
-            targetAddress,
-            newExpireTimestamp,
-            votingEndTimestamp_,
-            voters_
+        require(
+            _stewardProposals[proposalId].voters.length > 0,
+            "No valid stewards"
         );
 
-        return _stewardProposals.length - 1;
+        _checkStewardProposalVotersAndVotesLength(proposalId);
+
+        // DEBUG
+        // for (
+        //     uint256 i = 0;
+        //     i < _stewardProposals[proposalId].voters.length;
+        //     i++
+        // ) {
+        //     if (_stewardProposals[proposalId].voters[i] == msg.sender)
+        //         _stewardProposals[proposalId].votes[i] = Vote.Approve;
+        // }
+
+        emit StewardProposalCreated(
+            proposalId,
+            _stewardProposals[proposalId].action,
+            _stewardProposals[proposalId].targetAddress,
+            _stewardProposals[proposalId].newExpireTimestamp,
+            _stewardProposals[proposalId].votingEndTimestamp,
+            _stewardProposals[proposalId].voters
+        );
     }
 
-    function voteOnProposal(uint256 proposalId, Vote vote) external {
+    function voteOnStewardProposal(uint256 proposalId, Vote vote) external {
         _checkStewardProposeIndex(proposalId);
         _checkStewardProposalVotersAndVotesLength(proposalId);
 
@@ -333,7 +317,7 @@ abstract contract StewardProposalVoting is StewardManager, Voting {
         proposal.votes[voterIndex] = vote;
     }
 
-    function executeProposal(uint256 proposalId) external {
+    function executeStewardProposal(uint256 proposalId) external {
         _checkStewardProposeIndex(proposalId);
         _checkStewardProposalVotersAndVotesLength(proposalId);
 
@@ -406,9 +390,9 @@ contract StewardSystem is StewardProposalVoting, Ownable {
         Ownable(owner)
     {}
 
-    // function setStewardVoteDuration(uint256 duration) external onlyOwner {
-    //     _setStewardVoteDuration(duration);
-    // }
+    function setStewardVoteDuration(uint256 duration) external onlyOwner {
+        _setStewardVoteDuration(duration);
+    }
 
     // function execute(
     //     address target,
