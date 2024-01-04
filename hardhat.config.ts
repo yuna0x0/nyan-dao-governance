@@ -4,7 +4,19 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 const config: HardhatUserConfig = {
-  solidity: "0.8.22",
+  solidity: {
+    compilers: [
+      {
+        version: "0.8.22",
+        settings: {
+          optimizer: {
+            enabled: true,
+            runs: 999999999
+          }
+        }
+      }
+    ]
+  },
   networks: {
     baseGoerli: {
       url: process.env.BASE_GOERLI_RPC_URL || "https://goerli.base.org",
