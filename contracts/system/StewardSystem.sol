@@ -1,13 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.22;
 
-import {Enum} from "@safe-global/safe-contracts/contracts/common/Enum.sol";
 import "@openzeppelin/contracts/utils/math/Math.sol";
 import "@openzeppelin/contracts/utils/structs/EnumerableMap.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 
-import {SafeModule} from "../base/SafeModule.sol";
-import {ISafeGovernance} from "../interfaces/ISafeGovernance.sol";
 import {Voting} from "../common/Voting.sol";
 import "../utils/MathUtils.sol";
 
@@ -397,7 +394,7 @@ contract StewardSystem is StewardProposalVoting, Ownable {
     // function execute(
     //     address target,
     //     bytes memory data
-    // ) external onlySteward {
+    // ) external onlyOwner {
     //     (bool success, bytes memory returnData) = target.call(data);
     //     require(success, string(returnData));
     // }
