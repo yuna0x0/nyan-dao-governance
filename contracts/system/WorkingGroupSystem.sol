@@ -263,6 +263,7 @@ abstract contract WorkingGroupProposalVoting is WorkingGroupAllowance, Voting {
         address _stewardSystem,
         address[] memory workingGroupAddresses,
         uint256[] memory workingGroupExpireTimestamps,
+        uint256[] memory workingGroupAllowances,
         uint256 proposalVoteDuration_
     )
         WorkingGroupManager(
@@ -275,6 +276,13 @@ abstract contract WorkingGroupProposalVoting is WorkingGroupAllowance, Voting {
         //     require(workingGroupAddresses[i] != address(0), "Cannot target zero address");
         //     require(workingGroupAddresses[i] != address(this), "Cannot target self");
         // }
+        require(
+            workingGroupAddresses.length == workingGroupAllowances.length,
+            "Length mismatch"
+        );
+        for (uint256 i = 0; i < workingGroupAddresses.length; i++) {
+            _approve(workingGroupAddresses[i], workingGroupAllowances[i]);
+        }
         workingGroupVoteDuration = proposalVoteDuration_;
     }
 
@@ -499,6 +507,7 @@ contract WorkingGroupSystem is SafeModule, WorkingGroupProposalVoting, Ownable {
         address _stewardSystem,
         address[] memory workingGroupAddresses,
         uint256[] memory workingGroupTimestamps,
+        uint256[] memory workingGroupAllowances,
         uint256 proposalVoteDuration_,
         address owner
     )
@@ -507,6 +516,7 @@ contract WorkingGroupSystem is SafeModule, WorkingGroupProposalVoting, Ownable {
             _stewardSystem,
             workingGroupAddresses,
             workingGroupTimestamps,
+            workingGroupAllowances,
             proposalVoteDuration_
         )
         Ownable(owner)
