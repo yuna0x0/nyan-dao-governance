@@ -114,7 +114,6 @@ abstract contract WorkingGroupManager {
     //     require(address_ != address(this), "Cannot target self");
     // }
 
-    // TODO: To be used by WorkingGroupSystem
     function _removeExpiredWorkingGroups() internal {
         address[] memory _addresses = _workingGroups.keys();
         for (uint256 i = 0; i < _addresses.length; i++) {
@@ -495,7 +494,6 @@ abstract contract WorkingGroupProposalVoting is WorkingGroupAllowance, Voting {
         );
     }
 
-    // [TODO] To be used by WorkingGroupSystem
     function _setWorkingGroupVoteDuration(uint256 duration) internal {
         workingGroupVoteDuration = duration;
     }
@@ -522,12 +520,36 @@ contract WorkingGroupSystem is SafeModule, WorkingGroupProposalVoting, Ownable {
         Ownable(owner)
     {}
 
-    function setWorkingGroupVoteDuration(uint256 duration) external onlyOwner {
-        _setWorkingGroupVoteDuration(duration);
+    function removeExpiredWorkingGroups() external onlyOwner {
+        _removeExpiredWorkingGroups();
+    }
+
+    function setWorkingGroup(
+        address address_,
+        uint256 expireTimestamp,
+        uint256 allowance
+    ) external onlyOwner returns (bool isNewEntry) {
+        isNewEntry = _setWorkingGroup(address_, expireTimestamp);
+        _approve(address_, allowance);
+    }
+
+    function removeWorkingGroup(
+        address address_
+    ) external onlyOwner returns (bool success) {
+        require(
+            getWorkingGroupStatus(address_) != WorkingGroupStatus.NotExist,
+            "Working Group does not exist"
+        );
+        success = _removeWorkingGroup(address_);
+        _approve(address_, 0);
     }
 
     function setStewardSystem(address stewardSystem_) external onlyOwner {
         _setStewardSystem(stewardSystem_);
+    }
+
+    function setWorkingGroupVoteDuration(uint256 duration) external onlyOwner {
+        _setWorkingGroupVoteDuration(duration);
     }
 
     function sendFromSafe(

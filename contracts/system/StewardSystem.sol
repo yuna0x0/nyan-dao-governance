@@ -99,7 +99,6 @@ abstract contract StewardManager {
     //     require(address_ != address(this), "Cannot target self");
     // }
 
-    // TODO: To be used by StewardSystem
     function _removeExpiredStewards() internal {
         address[] memory _addresses = _stewards.keys();
         for (uint256 i = 0; i < _addresses.length; i++) {
@@ -366,7 +365,6 @@ abstract contract StewardProposalVoting is StewardManager, Voting {
         );
     }
 
-    // [TODO] To be used by StewardSystem
     function _setStewardVoteDuration(uint256 duration) internal {
         proposalVoteDuration = duration;
     }
@@ -386,6 +384,27 @@ contract StewardSystem is StewardProposalVoting, Ownable {
         )
         Ownable(owner)
     {}
+
+    function removeExpiredStewards() external onlyOwner {
+        _removeExpiredStewards();
+    }
+
+    function setSteward(
+        address address_,
+        uint256 expireTimestamp
+    ) external onlyOwner returns (bool isNewEntry) {
+        return _setSteward(address_, expireTimestamp);
+    }
+
+    function removeSteward(
+        address address_
+    ) external onlyOwner returns (bool success) {
+        require(
+            getStewardStatus(address_) != StewardStatus.NotExist,
+            "Steward does not exist"
+        );
+        return _removeSteward(address_);
+    }
 
     function setStewardVoteDuration(uint256 duration) external onlyOwner {
         _setStewardVoteDuration(duration);
